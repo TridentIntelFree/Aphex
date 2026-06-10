@@ -108,16 +108,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · NO SAMPLES</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.2</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
+<div id="errBanner" style="display:none;background:#3a120c;border:1px solid var(--danger);border-radius:6px;color:#f0b9b0;font-size:10px;font-family:ui-monospace,Menlo,monospace;padding:8px 10px;margin-bottom:8px;word-break:break-all"></div>
 
 <div class="transport">
   <button class="btn" id="playBtn">PLAY</button>
   <div class="lcd">
     <div><div class="bpm mono" id="bpmRead">138</div><div class="lbl">BPM</div></div>
-    <div class="right"><div class="stepct mono"><span id="ptnRead">A</span>·<span id="stepRead">01</span></div><div class="lbl">PTN · STEP</div></div>
+    <div class="right"><div class="stepct mono"><span id="ptnRead">A</span>·<span id="stepRead">01</span></div><div class="lbl" id="ctxState">CTX —</div></div>
   </div>
   <button id="ruinBtn">RUIN</button>
 </div>
@@ -160,6 +161,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
    10 voices · multi-engine · 64 steps · 4 patterns · chain
    ============================================================ */
 const $=id=>document.getElementById(id);
+/* ---- on-screen diagnostics (phone-only workflow: errors must be visible) ---- */
+function showErr(msg){
+  const b=$('errBanner');if(!b)return;
+  b.style.display='block';
+  b.textContent='ERR: '+msg;
+}
+window.onerror=(msg,src,line,col)=>{showErr(msg+' @'+(line||'?')+':'+(col||'?'));};
+window.addEventListener('unhandledrejection',e=>showErr('promise: '+(e.reason&&e.reason.message||e.reason)));
+setInterval(()=>{
+  const el=$('ctxState');if(!el)return;
+  el.textContent=ctx?('CTX '+ctx.state.toUpperCase().slice(0,4)):'CTX NONE';
+},500);
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const MAXSTEP=64, NPTN=4, PTN_NAMES=['A','B','C','D'];
 
@@ -626,6 +639,7 @@ function scheduleTick(){
   }
 }
 function start(){
+ try{
   initAudio();
   if(ctx.state==='suspended')ctx.resume();
   // iOS unlock: play a 1-sample silent buffer inside the gesture
@@ -636,9 +650,10 @@ function start(){
   master.mute.gain.cancelScheduledValues(n);master.mute.gain.setValueAtTime(1,n);
   master.dFb.gain.cancelScheduledValues(n);master.dFb.gain.setValueAtTime(FX.dfb/100,n);
   startMonoVoices();
-  timer=setInterval(scheduleTick,25);
+  timer=setInterval(()=>{try{scheduleTick();}catch(e){showErr('seq: '+e.message);}},25);
   $('playBtn').textContent='STOP';$('playBtn').classList.add('on');
   requestAnimationFrame(drawLoop);
+ }catch(e){showErr('start: '+e.message);}
 }
 function stop(){
   playing=false;clearInterval(timer);
