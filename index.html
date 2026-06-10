@@ -209,7 +209,7 @@ let cp=0;
 
 /* ---------------- audio engine ---------------- */
 let ctx=null,master={},noiseBuf=null,crushIsWorklet=false;
-let playing=false,g16=0,nextT=0,timer=null,initPromise=null;
+let playing=false,g16=0,nextT=0,timer=null;
 const drawQ=[];let uiDirtyPattern=false;
 const monoVoices={};
 const activeOH=[];
@@ -243,65 +243,74 @@ class Crush extends AudioWorkletProcessor{
 registerProcessor('crush',Crush);`;
 
 function initAudio(){
-  if(initPromise)return initPromise;
-  initPromise=(async()=>{
-    ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
-    noiseBuf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);
-    const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  if(ctx)return;
+  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  noiseBuf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);
+  const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
 
-    master.bus=ctx.createGain();master.bus.gain.value=.9;
-    master.shaper=ctx.createWaveShaper();master.shaper.oversample='2x';
-    master.trim=ctx.createGain();
+  master.bus=ctx.createGain();master.bus.gain.value=.9;
+  master.shaper=ctx.createWaveShaper();master.shaper.oversample='2x';
+  master.trim=ctx.createGain();
 
-    // crusher: AudioWorklet, ScriptProcessor fallback
-    try{
-      const url=URL.createObjectURL(new Blob([CRUSH_SRC],{type:'application/javascript'}));
-      await ctx.audioWorklet.addModule(url);
-      master.crush=new AudioWorkletNode(ctx,'crush',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});
-      crushIsWorklet=true;
-    }catch(e){
-      const sp=ctx.createScriptProcessor(1024,1,1);
-      let hold=0,cnt=0;
-      sp.onaudioprocess=ev=>{
-        const inp=ev.inputBuffer.getChannelData(0),out=ev.outputBuffer.getChannelData(0);
-        const bits=16-Math.round(FX.bits/100*13),q=Math.pow(0.5,bits-1);
-        const div=1+Math.round(FX.down/100*39);
-        for(let i=0;i<inp.length;i++){
-          if(cnt%div===0)hold=q*Math.floor(inp[i]/q+0.5);
-          cnt++;out[i]=hold;
-        }
-      };
-      master.crush=sp;crushIsWorklet=false;
-    }
+  master.comp=ctx.createDynamicsCompressor();
+  master.comp.threshold.value=-12;master.comp.ratio.value=4;
+  master.comp.attack.value=.003;master.comp.release.value=.12;
+  master.djf=ctx.createBiquadFilter();master.djf.type='lowpass';master.djf.frequency.value=20000;master.djf.Q.value=.7;
+  master.mute=ctx.createGain();master.mute.gain.value=1;
 
-    master.comp=ctx.createDynamicsCompressor();
-    master.comp.threshold.value=-12;master.comp.ratio.value=4;
-    master.comp.attack.value=.003;master.comp.release.value=.12;
-    master.djf=ctx.createBiquadFilter();master.djf.type='lowpass';master.djf.frequency.value=20000;master.djf.Q.value=.7;
-    master.mute=ctx.createGain();master.mute.gain.value=1;
+  master.dIn=ctx.createGain();
+  master.delay=ctx.createDelay(2);
+  master.dFilt=ctx.createBiquadFilter();master.dFilt.type='lowpass';master.dFilt.frequency.value=2000;
+  master.dFb=ctx.createGain();master.dRet=ctx.createGain();
+  master.dIn.connect(master.delay);master.delay.connect(master.dFilt);
+  master.dFilt.connect(master.dFb);master.dFb.connect(master.delay);
+  master.dFilt.connect(master.dRet);
 
-    master.dIn=ctx.createGain();
-    master.delay=ctx.createDelay(2);
-    master.dFilt=ctx.createBiquadFilter();master.dFilt.type='lowpass';master.dFilt.frequency.value=2000;
-    master.dFb=ctx.createGain();master.dRet=ctx.createGain();
-    master.dIn.connect(master.delay);master.delay.connect(master.dFilt);
-    master.dFilt.connect(master.dFb);master.dFb.connect(master.delay);
-    master.dFilt.connect(master.dRet);
+  // crusher starts as a passthrough; the worklet hot-swaps in when ready
+  master.crush=null;
+  master.bus.connect(master.shaper);master.shaper.connect(master.trim);
+  master.trim.connect(master.comp);
+  master.dRet.connect(master.comp);
+  master.comp.connect(master.djf);master.djf.connect(master.mute);
+  master.mute.connect(ctx.destination);
 
-    master.bus.connect(master.shaper);master.shaper.connect(master.trim);
-    master.trim.connect(master.crush);master.crush.connect(master.comp);
-    master.dRet.connect(master.comp);
-    master.comp.connect(master.djf);master.djf.connect(master.mute);
-    master.mute.connect(ctx.destination);
-
-    TRACKS.forEach(t=>{
-      t.gain=ctx.createGain();t.gain.gain.value=t.vol;
-      t.sendG=ctx.createGain();t.sendG.gain.value=t.send;
-      t.gain.connect(master.bus);t.gain.connect(t.sendG);t.sendG.connect(master.dIn);
-    });
-    applyFX();
-  })();
-  return initPromise;
+  TRACKS.forEach(t=>{
+    t.gain=ctx.createGain();t.gain.gain.value=t.vol;
+    t.sendG=ctx.createGain();t.sendG.gain.value=t.send;
+    t.gain.connect(master.bus);t.gain.connect(t.sendG);t.sendG.connect(master.dIn);
+  });
+  applyFX();
+  loadCrusher(); // async, never blocks sound
+}
+function swapInCrusher(node){
+  master.crush=node;
+  master.trim.disconnect();
+  master.trim.connect(node);node.connect(master.comp);
+  applyFX();
+}
+function loadCrusher(){
+  if(!ctx.audioWorklet){loadCrusherSP();return;}
+  const url=URL.createObjectURL(new Blob([CRUSH_SRC],{type:'application/javascript'}));
+  ctx.audioWorklet.addModule(url).then(()=>{
+    const node=new AudioWorkletNode(ctx,'crush',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});
+    crushIsWorklet=true;swapInCrusher(node);
+  }).catch(()=>{loadCrusherSP();});
+}
+function loadCrusherSP(){
+  try{
+    const sp=ctx.createScriptProcessor(1024,1,1);
+    let hold=0,cnt=0;
+    sp.onaudioprocess=ev=>{
+      const inp=ev.inputBuffer.getChannelData(0),out=ev.outputBuffer.getChannelData(0);
+      const bits=16-Math.round(FX.bits/100*13),q=Math.pow(0.5,bits-1);
+      const div=1+Math.round(FX.down/100*39);
+      for(let i=0;i<inp.length;i++){
+        if(cnt%div===0)hold=q*Math.floor(inp[i]/q+0.5);
+        cnt++;out[i]=hold;
+      }
+    };
+    crushIsWorklet=false;swapInCrusher(sp);
+  }catch(e){/* no crusher available — clean passthrough remains */}
 }
 
 function applyFX(){
@@ -587,6 +596,7 @@ function triggerMono(ti,st,t,sd,forceRetrig){
 /* ---------------- sequencer ---------------- */
 function stepDurSec(){return 60/state.bpm/4;}
 function scheduleTick(){
+  if(ctx.state!=='running'){ctx.resume();nextT=ctx.currentTime+.08;return;}
   const horizon=ctx.currentTime+.12,sd=stepDurSec();
   while(nextT<horizon){
     if(state.chain&&g16>0&&g16%64===0){cp=(cp+1)%NPTN;uiDirtyPattern=true;}
@@ -615,13 +625,16 @@ function scheduleTick(){
     nextT+=sd;g16++;
   }
 }
-async function start(){
-  await initAudio();
-  await ctx.resume();
-  playing=true;g16=0;nextT=ctx.currentTime+.06;
+function start(){
+  initAudio();
+  if(ctx.state==='suspended')ctx.resume();
+  // iOS unlock: play a 1-sample silent buffer inside the gesture
+  const ub=ctx.createBufferSource();ub.buffer=ctx.createBuffer(1,1,22050);
+  ub.connect(ctx.destination);ub.start(0);
+  playing=true;g16=0;nextT=ctx.currentTime+.08;
   const n=ctx.currentTime;
   master.mute.gain.cancelScheduledValues(n);master.mute.gain.setValueAtTime(1,n);
-  master.dFb.gain.setValueAtTime(FX.dfb/100,n);
+  master.dFb.gain.cancelScheduledValues(n);master.dFb.gain.setValueAtTime(FX.dfb/100,n);
   startMonoVoices();
   timer=setInterval(scheduleTick,25);
   $('playBtn').textContent='STOP';$('playBtn').classList.add('on');
@@ -940,9 +953,10 @@ $('lenVal').onclick=()=>{ // tap value to cycle bar lengths
 ['drive','bits','down','filter','dtime','dfb','dret'].forEach(k=>{
   $('fx_'+k).oninput=e=>{FX[k]=+e.target.value;$('fxv_'+k).textContent=FX[k];applyFX();save();};
 });
-document.addEventListener('pointerdown',function unlock(){
-  initAudio().then(()=>{if(ctx.state==='suspended')ctx.resume();});
-},{once:true});
+document.addEventListener('pointerdown',()=>{
+  initAudio();
+  if(ctx&&ctx.state==='suspended')ctx.resume();
+});
 
 /* ---------------- boot ---------------- */
 load();
