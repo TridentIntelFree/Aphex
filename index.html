@@ -108,11 +108,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.3</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.4</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
 <div id="errBanner" style="display:none;background:#3a120c;border:1px solid var(--danger);border-radius:6px;color:#f0b9b0;font-size:10px;font-family:ui-monospace,Menlo,monospace;padding:8px 10px;margin-bottom:8px;word-break:break-all"></div>
+
+<div class="panel" style="padding:8px 12px">
+  <div class="row" style="margin-bottom:0">
+    <button class="smallbtn" id="testRaw" style="color:var(--led-hot);border-color:#5a3414">TEST RAW</button>
+    <button class="smallbtn" id="testBus" style="color:var(--led-hot);border-color:#5a3414">TEST BUS</button>
+    <div class="val mono" id="meters" style="flex:1;width:auto;text-align:right;font-size:10px">BUS ░░░░░░ OUT ░░░░░░</div>
+  </div>
+</div>
 
 <div class="transport">
   <button class="btn" id="playBtn">PLAY</button>
@@ -173,6 +181,31 @@ setInterval(()=>{
   const el=$('ctxState');if(!el)return;
   el.textContent=ctx?('CTX '+ctx.state.toUpperCase().slice(0,4)):'CTX NONE';
 },500);
+/* test tones: RAW bypasses everything (osc -> speaker), BUS rides the full chain */
+function beep(raw){
+  try{
+    initAudio();
+    if(ctx.state==='suspended')ctx.resume();
+    const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime;
+    o.type='sine';o.frequency.value=raw?440:660;
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.linearRampToValueAtTime(.5,t+.01);
+    g.gain.setTargetAtTime(.0001,t+1.0,.05);
+    o.connect(g);g.connect(raw?ctx.destination:master.bus);
+    o.start(t);o.stop(t+1.6);
+  }catch(e){showErr('beep: '+e.message);}
+}
+const meterBuf=new Uint8Array(512);
+function lvl(an){
+  an.getByteTimeDomainData(meterBuf);
+  let m=0;for(let i=0;i<meterBuf.length;i++){const d=Math.abs(meterBuf[i]-128);if(d>m)m=d;}
+  return m/128;
+}
+setInterval(()=>{
+  const el=$('meters');if(!el||!ctx||!master.anBus)return;
+  const bars=x=>{const n=Math.max(0,Math.min(6,Math.round(x*9)));return '█'.repeat(n)+'░'.repeat(6-n);};
+  el.textContent='BUS '+bars(lvl(master.anBus))+' OUT '+bars(lvl(master.anOut));
+},120);
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const MAXSTEP=64, NPTN=4, PTN_NAMES=['A','B','C','D'];
 
@@ -273,6 +306,10 @@ function initAudio(){
     t.sendG=ctx.createGain();t.sendG.gain.value=t.send;
     t.gain.connect(master.bus);t.gain.connect(t.sendG);t.sendG.connect(master.dIn);
   });
+  // diagnostic taps: BUS = are the voices generating signal at all?
+  //                  OUT = is signal surviving the whole master chain?
+  master.anBus=ctx.createAnalyser();master.anBus.fftSize=512;master.bus.connect(master.anBus);
+  master.anOut=ctx.createAnalyser();master.anOut.fftSize=512;master.mute.connect(master.anOut);
   applyFX();
 }
 function ensureCrusher(){
@@ -931,6 +968,8 @@ function load(){
 
 /* ---------------- wire controls ---------------- */
 $('playBtn').onclick=()=>playing?stop():start();
+$('testRaw').onclick=()=>beep(true);
+$('testBus').onclick=()=>beep(false);
 $('ruinBtn').onclick=()=>ruin();
 $('clearBtn').onclick=()=>{
   curPT().steps.forEach(s=>{s.on=false;s.acc=false;s.rat=1;s.prob=100;s.slide=false;});
