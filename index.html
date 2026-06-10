@@ -108,7 +108,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.4</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.5</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
@@ -167,6 +167,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 /* ============================================================
    DRUKBOX II — self-contained synthetic studio. No samples.
    10 voices · multi-engine · 64 steps · 4 patterns · chain
+   BUILD 2.5: iOS audio-session playback fix (anti-mute)
    ============================================================ */
 const $=id=>document.getElementById(id);
 /* ---- on-screen diagnostics (phone-only workflow: errors must be visible) ---- */
@@ -179,11 +180,62 @@ window.onerror=(msg,src,line,col)=>{showErr(msg+' @'+(line||'?')+':'+(col||'?'))
 window.addEventListener('unhandledrejection',e=>showErr('promise: '+(e.reason&&e.reason.message||e.reason)));
 setInterval(()=>{
   const el=$('ctxState');if(!el)return;
-  el.textContent=ctx?('CTX '+ctx.state.toUpperCase().slice(0,4)):'CTX NONE';
+  let sess='';
+  try{if(navigator.audioSession)sess='·'+String(navigator.audioSession.type).slice(0,4).toUpperCase();}catch(e){}
+  el.textContent=(ctx?('CTX '+ctx.state.toUpperCase().slice(0,4)):'CTX NONE')+sess;
 },500);
+
+/* ============================================================
+   BUILD 2.5 FIX — iOS AUDIO SESSION CATEGORY
+   Safari runs Web Audio under the "ambient" session by default.
+   Ambient sessions are hard-muted by the silent switch and can
+   stay muted in wedged states: graph runs, meters move, speaker
+   gets nothing. Fix: force the "playback" category, which iOS
+   treats like music and never mutes.
+   Path 1 (iOS 17+): navigator.audioSession.type = 'playback'
+   Path 2 (fallback): a silent looping <audio> element started
+   inside a user gesture flips the category as a side effect.
+   ============================================================ */
+let kickEl=null,kickURL=null;
+function silentWavURL(){
+  if(kickURL)return kickURL;
+  const sr=8000,n=sr; // 1 second of 16-bit silence
+  const buf=new ArrayBuffer(44+n*2),v=new DataView(buf);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+  ws(0,'RIFF');v.setUint32(4,36+n*2,true);ws(8,'WAVE');ws(12,'fmt ');
+  v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);
+  v.setUint16(32,2,true);v.setUint16(34,16,true);
+  ws(36,'data');v.setUint32(40,n*2,true);
+  kickURL=URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
+  return kickURL;
+}
+function audioSessionUnlock(){
+  // Path 1: direct session API
+  try{
+    if(navigator.audioSession&&navigator.audioSession.type!=='playback')
+      navigator.audioSession.type='playback';
+  }catch(e){}
+  // Path 2: silent looping media element (must start inside a gesture)
+  try{
+    if(!kickEl){
+      kickEl=document.createElement('audio');
+      kickEl.setAttribute('playsinline','');
+      kickEl.loop=true;
+      kickEl.preload='auto';
+      kickEl.src=silentWavURL();
+      document.body.appendChild(kickEl);
+    }
+    if(kickEl.paused){const p=kickEl.play();if(p&&p.catch)p.catch(()=>{});}
+  }catch(e){}
+}
+// set the session type immediately too — the property doesn't need a gesture
+try{if(navigator.audioSession)navigator.audioSession.type='playback';}catch(e){}
+
 /* test tones: RAW bypasses everything (osc -> speaker), BUS rides the full chain */
 function beep(raw){
   try{
+    audioSessionUnlock();
     initAudio();
     if(ctx.state==='suspended')ctx.resume();
     const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime;
@@ -656,6 +708,7 @@ function scheduleTick(){
 }
 function start(){
  try{
+  audioSessionUnlock();
   initAudio();
   if(ctx.state==='suspended')ctx.resume();
   // iOS unlock: play a 1-sample silent buffer inside the gesture
@@ -987,6 +1040,7 @@ $('lenVal').onclick=()=>{ // tap value to cycle bar lengths
   $('fx_'+k).oninput=e=>{FX[k]=+e.target.value;$('fxv_'+k).textContent=FX[k];applyFX();save();};
 });
 document.addEventListener('pointerdown',()=>{
+  audioSessionUnlock();
   initAudio();
   if(ctx&&ctx.state==='suspended')ctx.resume();
 });
