@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -108,7 +108,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.2</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.3</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
@@ -221,7 +221,7 @@ let cp=0;
 })();
 
 /* ---------------- audio engine ---------------- */
-let ctx=null,master={},noiseBuf=null,crushIsWorklet=false;
+let ctx=null,master={},noiseBuf=null,crushInserted=false;
 let playing=false,g16=0,nextT=0,timer=null;
 const drawQ=[];let uiDirtyPattern=false;
 const monoVoices={};
@@ -234,26 +234,6 @@ function driveCurve(amount){
   for(let i=0;i<n;i++){const x=i/(n-1)*2-1;c[i]=Math.tanh(k*x)/Math.tanh(k);}
   return c;
 }
-const CRUSH_SRC=`
-class Crush extends AudioWorkletProcessor{
-  static get parameterDescriptors(){return[
-    {name:'bits',defaultValue:16,minValue:3,maxValue:16},
-    {name:'div',defaultValue:1,minValue:1,maxValue:40}]}
-  constructor(){super();this.hold=0;this.cnt=0;}
-  process(inputs,outputs,params){
-    const inp=inputs[0][0],out=outputs[0][0];
-    if(!out)return true;
-    const bits=params.bits[0],div=Math.max(1,Math.round(params.div[0]));
-    const q=Math.pow(0.5,bits-1);
-    for(let i=0;i<out.length;i++){
-      const x=inp?inp[i]:0;
-      if(this.cnt%div===0)this.hold=q*Math.floor(x/q+0.5);
-      this.cnt++;out[i]=this.hold;
-    }
-    return true;
-  }
-}
-registerProcessor('crush',Crush);`;
 
 function initAudio(){
   if(ctx)return;
@@ -279,7 +259,8 @@ function initAudio(){
   master.dFilt.connect(master.dFb);master.dFb.connect(master.delay);
   master.dFilt.connect(master.dRet);
 
-  // crusher starts as a passthrough; the worklet hot-swaps in when ready
+  // master path is ALL native nodes by default (same topology v1 proved on-device);
+  // the crusher is only spliced in when CRUSH or RATE÷ is actually raised
   master.crush=null;
   master.bus.connect(master.shaper);master.shaper.connect(master.trim);
   master.trim.connect(master.comp);
@@ -293,23 +274,9 @@ function initAudio(){
     t.gain.connect(master.bus);t.gain.connect(t.sendG);t.sendG.connect(master.dIn);
   });
   applyFX();
-  loadCrusher(); // async, never blocks sound
 }
-function swapInCrusher(node){
-  master.crush=node;
-  master.trim.disconnect();
-  master.trim.connect(node);node.connect(master.comp);
-  applyFX();
-}
-function loadCrusher(){
-  if(!ctx.audioWorklet){loadCrusherSP();return;}
-  const url=URL.createObjectURL(new Blob([CRUSH_SRC],{type:'application/javascript'}));
-  ctx.audioWorklet.addModule(url).then(()=>{
-    const node=new AudioWorkletNode(ctx,'crush',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});
-    crushIsWorklet=true;swapInCrusher(node);
-  }).catch(()=>{loadCrusherSP();});
-}
-function loadCrusherSP(){
+function ensureCrusher(){
+  if(master.crush)return true;
   try{
     const sp=ctx.createScriptProcessor(1024,1,1);
     let hold=0,cnt=0;
@@ -322,18 +289,30 @@ function loadCrusherSP(){
         cnt++;out[i]=hold;
       }
     };
-    crushIsWorklet=false;swapInCrusher(sp);
-  }catch(e){/* no crusher available — clean passthrough remains */}
+    master.crush=sp;return true;
+  }catch(e){return false;}
+}
+function setCrushRouting(){
+  const want=FX.bits>0||FX.down>0;
+  if(want===crushInserted)return;
+  if(want&&ensureCrusher()){
+    master.trim.disconnect();
+    master.trim.connect(master.crush);
+    master.crush.connect(master.comp);
+    crushInserted=true;
+  }else if(!want&&crushInserted){
+    master.trim.disconnect();
+    try{master.crush.disconnect();}catch(e){}
+    master.trim.connect(master.comp);
+    crushInserted=false;
+  }
 }
 
 function applyFX(){
   if(!ctx||!master.bus)return;
   master.shaper.curve=driveCurve(FX.drive);
   master.trim.gain.value=1-FX.drive/100*.35;
-  if(crushIsWorklet){
-    master.crush.parameters.get('bits').value=16-Math.round(FX.bits/100*13);
-    master.crush.parameters.get('div').value=1+Math.round(FX.down/100*39);
-  }
+  setCrushRouting();
   const v=FX.filter;
   if(v<48){master.djf.type='lowpass';master.djf.frequency.value=200*Math.pow(100,v/48);}
   else if(v>52){master.djf.type='highpass';master.djf.frequency.value=20*Math.pow(200,(v-52)/48);}
