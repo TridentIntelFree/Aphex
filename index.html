@@ -121,6 +121,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 .perf.hot{border-color:var(--led)!important;color:var(--led-hot)!important;background:#27160a!important;box-shadow:0 0 14px rgba(232,134,42,.35)}
 .barsel.wide{flex:1}
 .row .barsel{flex:1}
+/* ---- 2.8 live pads ---- */
+.padbank{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:8px}
+.dpad{aspect-ratio:1/.78;background:var(--panel-hi);border:1px solid var(--line);border-radius:8px;color:var(--silk);font-size:11px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center;transition:transform .04s}
+.dpad.mel{background:#15130c;border-color:#3a2f12;color:var(--led-hot)}
+.dpad.hit{border-color:var(--led-hot);background:#2a1a0a;box-shadow:0 0 14px var(--led-glow);transform:scale(.96)}
+.padkbd{display:grid;grid-template-columns:repeat(15,1fr);gap:3px;margin-bottom:8px}
+.pkey{aspect-ratio:1/2.3;border-radius:4px;border:1px solid var(--line);background:#dcd6c6;color:#333;font-size:7px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;font-weight:700}
+.pkey.blk{background:#23271f;color:var(--silk-dim)}
+.pkey.hit{border-color:var(--led-hot);box-shadow:0 0 8px var(--led-glow);transform:scale(.94)}
+#recArm.on{background:#3a120c;border-color:var(--danger);color:#ff8f7f;box-shadow:0 0 12px rgba(176,58,46,.4)}
+#metroBtn.on{border-color:var(--led);color:var(--led-hot);background:#1c150c}
 </style>
 </head>
 <body>
@@ -128,7 +139,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.7</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.8</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
@@ -156,12 +167,23 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
   <div class="row"><label>SWING</label><input type="range" id="swingSl" min="0" max="100" value="22"><div class="val" id="swingVal">22</div></div>
 </div>
 
+<div class="modes" id="viewRow">
+  <button class="mode sel" id="viewStep">STEP SEQ</button>
+  <button class="mode" id="viewPads">LIVE PADS</button>
+</div>
 <div class="ptnrow" id="ptnrow"></div>
 <div class="chips" id="chips"></div>
 <div class="modes" id="modes"></div>
 <div class="pages" id="pagesRow"></div>
 <div class="grid" id="grid"></div>
 <div class="kbd" id="kbd"></div>
+
+<div class="panel" id="padPanel" style="display:none">
+  <h3><span>LIVE PADS · TAP TO PLAY</span><span class="len"><button class="smallbtn" id="recArm" style="border-color:#5a3414">REC</button><button class="smallbtn" id="metroBtn">CLICK</button></span></h3>
+  <div class="padbank" id="padbank"></div>
+  <div class="padkbd" id="padkbd"></div>
+  <div class="empty" id="padHint">ARM REC + PLAY, THEN TAP PADS TO OVERDUB INTO THE PATTERN (QUANTIZED)</div>
+</div>
 
 <div class="panel" id="trackPanel">
   <h3><span id="tpTitle">TRACK</span><span class="len"><button id="lenDn">−</button><span class="lv" id="lenVal">16</span><button id="lenUp">+</button></span></h3>
@@ -217,7 +239,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
   <div id="slotList"></div>
 </div>
 
-<div class="foot">DRUKBOX II · POLYMETER / SIDECHAIN / REVERB / WOBBLE / LOFI / LIVE FX / WAV RENDER</div>
+<div class="foot">DRUKBOX II · SIDECHAIN / REVERB / WOBBLE / LOFI / LIVE PADS + OVERDUB / WAV RENDER</div>
 
 <script>
 'use strict';
@@ -228,20 +250,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
    BUILD 2.6: WAV render (offline) · named sets · file I/O · undo
    BUILD 2.7: sidechain pump · convolver reverb · tempo-synced wobble
               filter · lofi macro · live perform FX (gate/stutter/throw)
+   BUILD 2.8: LIVE PADS view — finger-drum + play notes, overdub-record
+              into the pattern (step-quantized), metronome, STRINGS engine
    ------------------------------------------------------------
    RESUME ROADMAP (next session — read this first):
-     SHIPPED 2.7 ✓ PUMP (kick sidechain) ✓ REVERB send+size
-       ✓ WOBBLE (synced LFO auto-filter, LP/BP/HP) ✓ LOFI macro
-       ✓ PERFORM panel: GATE / STUTTER(roll) / FILTER throw (hold)
-     QUEUED (not yet built, in priority order):
-       1. Per-step parameter locks (filter/decay/pitch per step)
-       2. Song mode (arrange patterns w/ repeats -> full-track render)
-       3. Tape-stop + reverse throws (need resampling/record buffer)
-       4. Per-track mute/solo on the chip row
-       5. Beat-repeat w/ real audio capture (vs current scheduler roll)
-     ARCH NOTES: one engine serves live + offline render (buildGraph
-       swaps the global ctx). New FX nodes live in buildGraph so they
-       bake into WAV renders. Gate/stutter are live-only (off at render).
+     SHIPPED 2.7 ✓ PUMP ✓ REVERB ✓ WOBBLE ✓ LOFI ✓ GATE/STUTTER/THROW
+     SHIPPED 2.8 ✓ LIVE PADS (tap voices) ✓ note strip for mel voices
+       ✓ REC overdub into current pattern (quantized) ✓ CLICK metronome
+       ✓ STRINGS engine on LEAD (detuned saw ensemble + vibrato)
+     QUEUED (priority order):
+       1. True note-on/off sustain on pads (hold = sustain, release = stop)
+       2. Live audio capture of a performance to WAV (MediaRecorder/stream)
+       3. Velocity-sensitive pads (accent on harder/longer press)
+       4. Per-step parameter locks (filter/decay/pitch per step)
+       5. Song mode (arrange patterns -> full-track render)
+       6. Per-track mute/solo on the chip row; tape-stop/reverse throws
+     ARCH NOTES: one engine serves live + offline render (buildGraph swaps
+       global ctx). Live pad notes use transient polyphonic voices via
+       liveVoice(); overdub quantizes to nearest step vs seqStart. Pads
+       fire independent of the sequencer's mono voices (no voice-stealing).
    ============================================================ */
 const $=id=>document.getElementById(id);
 /* ---- on-screen diagnostics (phone-only workflow: errors must be visible) ---- */
@@ -349,7 +376,7 @@ const TRACKS=[
    params:{cut:P('CUTOFF',60,3000,420),decay:P('DECAY',5,100,62),glide:P('GLIDE',0,100,18),drive:P('DRIVE',0,100,30)}},
  {id:'ACID',name:'ACD',vol:.62,send:.14,base:65.41,noteTrack:true,engines:['SAW','SQR'],engine:0,
    params:{cut:P('CUTOFF',80,5000,620),reso:P('RESO',0,28,16),env:P('ENVMOD',0,100,68),decay:P('DECAY',5,100,30)}},
- {id:'LEAD',name:'LED',vol:.5, send:.3, base:130.81,noteTrack:true,engines:['SAW','SQR','PLK'],engine:0,
+ {id:'LEAD',name:'LED',vol:.5, send:.3, base:130.81,noteTrack:true,engines:['SAW','SQR','PLK','STR'],engine:0,
    params:{cut:P('CUTOFF',200,9000,2400),det:P('DETUNE',0,40,12),decay:P('DECAY',5,100,40),glide:P('GLIDE',0,100,0)}},
  {id:'SWP', name:'SWP',vol:.4, send:.35,engines:['UP','DOWN'],engine:0, params:{len:P('LEN',1,32,16),tone:P('TONE',300,4000,1200)}},
 ];
@@ -394,6 +421,8 @@ const WOBTYPES=['lowpass','bandpass','highpass'];
 const WOBDIV=[{n:'1/4',m:1},{n:'1/8',m:2},{n:'1/16',m:4},{n:'1/8T',m:3},{n:'1/2',m:.5}];
 const GATEDIV=[{n:'1/8',m:2},{n:'1/16',m:4},{n:'1/4',m:1},{n:'1/8T',m:3}];
 let stutter=false,stutLen=2,stutAnchor=0;
+/* 2.8 live pads */
+let view='STEP',recArm=false,metro=false,seqStart=0,padNote=12;
 
 function driveCurve(amount){
   const k=1+amount/100*24,n=1024,c=new Float32Array(n);
@@ -603,6 +632,86 @@ function buildMotionUI(){
   buildSel('gaterate',GATEDIV,()=>FX.gaterate||0,i=>{FX.gaterate=i;applyFX();save();});
 }
 
+/* ============================================================
+   BUILD 2.8 — live pads: play voices, overdub into the pattern
+   ============================================================ */
+function flashPad(b){if(!b)return;b.classList.add('hit');setTimeout(()=>b.classList.remove('hit'),90);}
+/* transient polyphonic voice for live melodic play (does not steal seq voices) */
+function liveVoice(ti,note){
+  const t=ctx.currentTime+0.012;
+  const tr=TRACKS[ti];
+  const v=buildMonoVoice(ti);
+  const f=tr.base*Math.pow(2,note/12);
+  v.setFreq(f,t,0);
+  const eng=tr.engines[tr.engine];
+  const atk=(eng==='STR')?0.09:0.005;
+  const rel=(eng==='STR')?1.0:(ti===BASS?0.4:0.3);
+  v.vca.gain.cancelScheduledValues(t);
+  v.vca.gain.setValueAtTime(.0001,t);
+  v.vca.gain.linearRampToValueAtTime(.7,t+atk);
+  v.vca.gain.setTargetAtTime(.0001,t+atk+0.12,rel);
+  setTimeout(()=>{try{v.kill();}catch(e){}},(atk+0.12+rel*4+0.5)*1000);
+}
+/* play a voice now; if armed + playing, overdub the hit into the nearest step */
+function padHit(ti,note){
+  audioSessionUnlock();if(!ctx)initAudio();if(ctx&&ctx.state==='suspended')ctx.resume();
+  const tr=TRACKS[ti],t=ctx.currentTime+0.012;
+  if(tr.noteTrack)liveVoice(ti,note==null?padNote:note);
+  else if(tr.id==='CHH')playHAT(t,tr.params,false,tr.gain,false,tr.engines[tr.engine]);
+  else if(tr.id==='OHH')playHAT(t,tr.params,false,tr.gain,true,tr.engines[tr.engine]);
+  else if(DRUMS[tr.id])DRUMS[tr.id](t,tr.params,false,tr.gain,tr.engines[tr.engine]);
+  if(playing&&recArm){
+    const sd=stepDurSec();
+    const k=Math.round((ctx.currentTime-seqStart)/sd);
+    const pt=patterns[cp].tr[ti];
+    const pos=((k%pt.len)+pt.len)%pt.len;
+    const st=pt.steps[pos];
+    st.on=true;
+    if(tr.noteTrack&&note!=null)st.note=note;
+    if(view==='STEP')renderGrid();
+    save();
+  }
+}
+function clickTick(t,accent){
+  if(!ctx)return;
+  const o=ctx.createOscillator(),g=ctx.createGain();
+  o.type='square';o.frequency.value=accent?2000:1300;
+  g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.22,t+.001);g.gain.setTargetAtTime(.0001,t+.004,.012);
+  o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+.05);
+}
+function renderPads(){
+  const host=$('padbank');if(!host)return;host.innerHTML='';
+  TRACKS.forEach((tr,ti)=>{
+    const b=document.createElement('button');
+    b.className='dpad'+(tr.noteTrack?' mel':'');b.textContent=tr.id;
+    b.addEventListener('pointerdown',e=>{e.preventDefault();flashPad(b);padHit(ti,tr.noteTrack?padNote:null);});
+    host.appendChild(b);
+  });
+}
+function renderPadKbd(){
+  const host=$('padkbd');if(!host)return;host.innerHTML='';
+  const ti=sel.track;
+  if(!TRACKS[ti].noteTrack){host.innerHTML='<div class="empty">SELECT BAS / ACD / LED TO PLAY NOTES</div>';return;}
+  for(let n=0;n<15;n++){
+    const abs=Math.min(36,n+12);
+    const blk=[1,3,6,8,10].includes(n%12);
+    const b=document.createElement('button');b.className='pkey'+(blk?' blk':'');
+    b.textContent=NOTE_NAMES[n%12];
+    b.addEventListener('pointerdown',e=>{e.preventDefault();flashPad(b);padNote=abs;padHit(ti,abs);});
+    host.appendChild(b);
+  }
+}
+function setView(v){
+  view=v;
+  ['modes','pagesRow','grid'].forEach(id=>{const e=$(id);if(e)e.style.display=(v==='PADS')?'none':'';});
+  if(v==='PADS')$('kbd').classList.remove('show');
+  $('padPanel').style.display=(v==='PADS')?'':'none';
+  $('viewStep').classList.toggle('sel',v==='STEP');
+  $('viewPads').classList.toggle('sel',v==='PADS');
+  if(v==='PADS'){renderPads();renderPadKbd();}
+  else{buildModes();renderPages();renderGrid();}
+}
+
 /* ---------------- one-shot drum voices ---------------- */
 function env(node,t,a,peak,decay){
   node.gain.cancelScheduledValues(t);
@@ -785,11 +894,22 @@ function buildMonoVoice(ti){
     v.filt.connect(v.vca);
     const d=p.det.v;
     if(eng==='SQR'){addOsc('square',1,-d,v.filt);addOsc('square',1,d,v.filt);}
+    else if(eng==='STR'){
+      // string ensemble: 4 detuned saws + shared vibrato, softer top end
+      addOsc('sawtooth',1,-13,v.filt);addOsc('sawtooth',1,-5,v.filt);
+      addOsc('sawtooth',1,6,v.filt);addOsc('sawtooth',1,14,v.filt);
+      v.filt.frequency.value=Math.min(p.cut.v,3600);
+      const vib=ctx.createOscillator();vib.type='sine';vib.frequency.value=5.2;
+      const vibG=ctx.createGain();vibG.gain.value=4.5;vib.connect(vibG);
+      v.parts.forEach(pt=>{if(pt.mult)vibG.connect(pt.osc.detune);});
+      vib.start();v.parts.push({osc:vib,mult:0});
+    }
     else{addOsc('sawtooth',1,-d,v.filt);addOsc('sawtooth',1,0,v.filt);addOsc('sawtooth',1,d,v.filt);}
   }
   v.vca.connect(tr.gain);
   v.setFreq=(f,t,ramp)=>{
     v.parts.forEach(pt=>{
+      if(!pt.mult)return; // skip modulators (vibrato etc.)
       const fr=pt.osc.frequency,target=f*pt.mult;
       fr.cancelScheduledValues(t);
       if(ramp>.002){fr.setValueAtTime(Math.max(8,v.lastFreq*pt.mult),t);fr.exponentialRampToValueAtTime(target,t+ramp);}
@@ -894,6 +1014,7 @@ function scheduleTick(){
         else DRUMS[tr.id](ht,tr.params,acc,tr.gain,tr.engines[tr.engine]);
       }
     });
+    if(metro&&g16%4===0)clickTick(t,g16%16===0);
     drawQ.push({g:g16,time:t,ptn:cp});
     nextT+=sd;
     if(stutter)g16=stutAnchor+(((g16+1)-stutAnchor)%stutLen);else g16++;
@@ -907,7 +1028,7 @@ function start(){
   // iOS unlock: play a 1-sample silent buffer inside the gesture
   const ub=ctx.createBufferSource();ub.buffer=ctx.createBuffer(1,1,22050);
   ub.connect(ctx.destination);ub.start(0);
-  playing=true;g16=0;nextT=ctx.currentTime+.08;
+  playing=true;g16=0;nextT=ctx.currentTime+.08;seqStart=nextT;
   const n=ctx.currentTime;
   master.mute.gain.cancelScheduledValues(n);master.mute.gain.setValueAtTime(1,n);
   master.dFb.gain.cancelScheduledValues(n);master.dFb.gain.setValueAtTime(FX.dfb/100,n);
@@ -1125,6 +1246,7 @@ function buildChips(){
       sel.track=i;sel.step=null;
       if(!TRACKS[i].noteTrack&&(sel.mode==='NOTE'||sel.mode==='SLIDE'))sel.mode='STEP';
       buildChips();buildModes();renderPages();renderGrid();buildTrackPanel();renderLen();
+      if(view==='PADS')renderPadKbd();
     };
     c.appendChild(b);chipDots.push(d);
   });
@@ -1429,6 +1551,11 @@ $('fx_revsize').oninput=e=>{$('fxv_revsize').textContent=e.target.value;setRever
 holdBtn($('pfGate'),gateSet);
 holdBtn($('pfStut'),stutOn);
 holdBtn($('pfFilt'),filtThrow);
+/* 2.8 live pads */
+$('viewStep').onclick=()=>setView('STEP');
+$('viewPads').onclick=()=>setView('PADS');
+$('recArm').onclick=()=>{recArm=!recArm;$('recArm').classList.toggle('on',recArm);};
+$('metroBtn').onclick=()=>{metro=!metro;$('metroBtn').classList.toggle('on',metro);};
 
 /* archive panel */
 let exportBars=4;
@@ -1482,7 +1609,7 @@ $('swingSl').value=state.swing;$('swingVal').textContent=state.swing;
 ['drive','bits','down','filter','dtime','dfb','dret'].forEach(k=>{$('fx_'+k).value=FX[k];$('fxv_'+k).textContent=FX[k];});
 $('ptnRead').textContent=PTN_NAMES[cp];
 renderPtnRow();buildChips();buildModes();renderPages();buildGrid();buildTrackPanel();renderLen();
-buildBarsel();renderLib();buildMotionUI();
+buildBarsel();renderLib();buildMotionUI();renderPads();renderPadKbd();
 </script>
 </body>
 </html>
