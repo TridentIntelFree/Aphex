@@ -101,6 +101,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 .len .lv{min-width:52px;text-align:center;color:var(--display);font-size:12px;font-family:ui-monospace,Menlo,monospace}
 .smallbtn{background:none;border:1px solid var(--line);border-radius:5px;color:var(--silk-dim);font-size:9px;letter-spacing:.12em;font-weight:700;padding:6px 10px}
 .foot{text-align:center;font-size:8px;letter-spacing:.2em;color:#3d473f;padding-top:6px}
+
+/* ---- ARCHIVE (save / load / render) ---- */
+.archrow{display:flex;gap:5px;margin-bottom:8px;align-items:stretch}
+.archrow .smallbtn{flex:1;min-height:40px}
+.barsel{display:flex;gap:4px}
+.barsel button{min-width:36px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--silk-dim);font-size:11px;font-weight:700}
+.barsel button.sel{border-color:var(--led);color:var(--led-hot);background:#1c150c}
+.dl{display:none;width:100%;text-align:center;background:#13210f;border:1px solid #3f7a2a;border-radius:6px;color:#c2f0a8;font-size:11px;font-weight:700;letter-spacing:.06em;padding:12px 8px;margin-bottom:8px;text-decoration:none;word-break:break-all}
+.dl.show{display:block}
+.dl:active{filter:brightness(1.3)}
+.slot{display:flex;align-items:center;gap:6px;background:#10140f;border:1px solid var(--line);border-radius:5px;padding:7px 9px;margin-bottom:5px}
+.slot .nm{flex:1;font-size:11px;color:var(--silk);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot .ts{font-size:8px;color:#5a6053;margin-left:6px;flex-shrink:0}
+.slot .ld{background:none;border:1px solid #5a3414;border-radius:4px;color:var(--led-hot);font-size:9px;font-weight:700;letter-spacing:.1em;padding:6px 10px}
+.slot .rm{background:none;border:1px solid var(--line);border-radius:4px;color:var(--silk-dim);font-size:12px;padding:4px 9px}
+.empty{font-size:10px;color:#3d473f;text-align:center;padding:8px;letter-spacing:.12em}
 </style>
 </head>
 <body>
@@ -108,7 +124,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
 <header>
   <div>
     <div class="wordmark">DRUK<span>BOX</span> II</div>
-    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.5</div>
+    <div class="fw">SYNTHETIC RHYTHM & BASS UNIT · BUILD 2.6</div>
   </div>
   <button class="smallbtn" id="clearBtn">CLR TRK</button>
 </header>
@@ -160,7 +176,24 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
   <div class="row"><label>RETURN</label><input type="range" id="fx_dret" min="0" max="100" value="70"><div class="val" id="fxv_dret">70</div></div>
 </div>
 
-<div class="foot">DRUKBOX II · 64-STEP POLYMETER / RATCHET / PROBABILITY / 4-PATTERN CHAIN</div>
+<div class="panel">
+  <h3><span>ARCHIVE · RENDER & SETS</span><button class="smallbtn" id="undoBtn">UNDO</button></h3>
+  <div class="archrow">
+    <div class="barsel" id="barsel"></div>
+    <button class="smallbtn" id="renderBtn" style="flex:1;color:var(--led-hot);border-color:#5a3414">RENDER WAV</button>
+  </div>
+  <a class="dl" id="wavDl" rel="noopener">SAVE WAV ▸</a>
+  <div class="archrow">
+    <button class="smallbtn" id="saveSet">SAVE SET</button>
+    <button class="smallbtn" id="expFile">EXPORT FILE</button>
+    <button class="smallbtn" id="impFile">IMPORT FILE</button>
+  </div>
+  <a class="dl" id="jsonDl" rel="noopener">SAVE SET FILE ▸</a>
+  <input type="file" id="impInput" accept=".json,application/json" style="display:none">
+  <div id="slotList"></div>
+</div>
+
+<div class="foot">DRUKBOX II · 64-STEP POLYMETER / RATCHET / PROBABILITY / 4-PATTERN CHAIN / WAV RENDER</div>
 
 <script>
 'use strict';
@@ -168,6 +201,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;heigh
    DRUKBOX II — self-contained synthetic studio. No samples.
    10 voices · multi-engine · 64 steps · 4 patterns · chain
    BUILD 2.5: iOS audio-session playback fix (anti-mute)
+   BUILD 2.6: WAV render (offline) · named sets · file I/O · undo
    ============================================================ */
 const $=id=>document.getElementById(id);
 /* ---- on-screen diagnostics (phone-only workflow: errors must be visible) ---- */
@@ -180,13 +214,14 @@ window.onerror=(msg,src,line,col)=>{showErr(msg+' @'+(line||'?')+':'+(col||'?'))
 window.addEventListener('unhandledrejection',e=>showErr('promise: '+(e.reason&&e.reason.message||e.reason)));
 setInterval(()=>{
   const el=$('ctxState');if(!el)return;
+  if(rendering){el.textContent='RENDERING';return;}
   let sess='';
   try{if(navigator.audioSession)sess='·'+String(navigator.audioSession.type).slice(0,4).toUpperCase();}catch(e){}
   el.textContent=(ctx?('CTX '+ctx.state.toUpperCase().slice(0,4)):'CTX NONE')+sess;
 },500);
 
 /* ============================================================
-   BUILD 2.5 FIX — iOS AUDIO SESSION CATEGORY
+   BUILD 2.5 FIX — iOS AUDIO SESSION CATEGORY  (UNCHANGED in 2.6)
    Safari runs Web Audio under the "ambient" session by default.
    Ambient sessions are hard-muted by the silent switch and can
    stay muted in wedged states: graph runs, meters move, speaker
@@ -254,7 +289,7 @@ function lvl(an){
   return m/128;
 }
 setInterval(()=>{
-  const el=$('meters');if(!el||!ctx||!master.anBus)return;
+  const el=$('meters');if(!el||!ctx||!master.anBus||rendering)return;
   const bars=x=>{const n=Math.max(0,Math.min(6,Math.round(x*9)));return '█'.repeat(n)+'░'.repeat(6-n);};
   el.textContent='BUS '+bars(lvl(master.anBus))+' OUT '+bars(lvl(master.anOut));
 },120);
@@ -307,7 +342,7 @@ let cp=0;
 
 /* ---------------- audio engine ---------------- */
 let ctx=null,master={},noiseBuf=null,crushInserted=false;
-let playing=false,g16=0,nextT=0,timer=null;
+let playing=false,g16=0,nextT=0,timer=null,rendering=false;
 const drawQ=[];let uiDirtyPattern=false;
 const monoVoices={};
 const activeOH=[];
@@ -320,12 +355,9 @@ function driveCurve(amount){
   return c;
 }
 
-function initAudio(){
-  if(ctx)return;
-  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
-  noiseBuf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);
-  const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
-
+/* build the full master + per-track graph against the current global ctx.
+   factored out of initAudio so the offline WAV renderer can reuse it. */
+function buildGraph(){
   master.bus=ctx.createGain();master.bus.gain.value=.9;
   master.shaper=ctx.createWaveShaper();master.shaper.oversample='2x';
   master.trim=ctx.createGain();
@@ -344,9 +376,7 @@ function initAudio(){
   master.dFilt.connect(master.dFb);master.dFb.connect(master.delay);
   master.dFilt.connect(master.dRet);
 
-  // master path is ALL native nodes by default (same topology v1 proved on-device);
-  // the crusher is only spliced in when CRUSH or RATE÷ is actually raised
-  master.crush=null;
+  master.crush=null;crushInserted=false;
   master.bus.connect(master.shaper);master.shaper.connect(master.trim);
   master.trim.connect(master.comp);
   master.dRet.connect(master.comp);
@@ -358,11 +388,16 @@ function initAudio(){
     t.sendG=ctx.createGain();t.sendG.gain.value=t.send;
     t.gain.connect(master.bus);t.gain.connect(t.sendG);t.sendG.connect(master.dIn);
   });
-  // diagnostic taps: BUS = are the voices generating signal at all?
-  //                  OUT = is signal surviving the whole master chain?
   master.anBus=ctx.createAnalyser();master.anBus.fftSize=512;master.bus.connect(master.anBus);
   master.anOut=ctx.createAnalyser();master.anOut.fftSize=512;master.mute.connect(master.anOut);
   applyFX();
+}
+function initAudio(){
+  if(ctx)return;
+  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  noiseBuf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);
+  const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  buildGraph();
 }
 function ensureCrusher(){
   if(master.crush)return true;
@@ -408,7 +443,7 @@ function applyFX(){
   else{master.djf.type='lowpass';master.djf.frequency.value=20000;}
   const beat=60/state.bpm;
   master.delay.delayTime.value=.05+FX.dtime/100*(beat*1.45);
-  if(playing)master.dFb.gain.value=FX.dfb/100;
+  master.dFb.gain.value=(playing||rendering)?FX.dfb/100:0;
   master.dRet.gain.value=FX.dret/100*.8;
 }
 
@@ -765,8 +800,98 @@ function drawLoop(){
   requestAnimationFrame(drawLoop);
 }
 
+/* ============================================================
+   BUILD 2.6 — OFFLINE WAV RENDER
+   Re-runs the exact same synthesis into an OfflineAudioContext
+   (faster than real time), then encodes 16-bit PCM .wav.
+   The global ctx/master/track-gains are temporarily pointed at
+   the offline context and restored afterward, so one engine
+   serves both live playback and rendering with no duplication.
+   ============================================================ */
+function bufferToWav(ab){
+  const nCh=ab.numberOfChannels,sr=ab.sampleRate,len=ab.length;
+  const chans=[];for(let c=0;c<nCh;c++)chans.push(ab.getChannelData(c));
+  const blockAlign=nCh*2,dataLen=len*blockAlign;
+  const buf=new ArrayBuffer(44+dataLen),dv=new DataView(buf);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)dv.setUint8(o+i,s.charCodeAt(i));};
+  ws(0,'RIFF');dv.setUint32(4,36+dataLen,true);ws(8,'WAVE');ws(12,'fmt ');
+  dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,nCh,true);
+  dv.setUint32(24,sr,true);dv.setUint32(28,sr*blockAlign,true);
+  dv.setUint16(32,blockAlign,true);dv.setUint16(34,16,true);
+  ws(36,'data');dv.setUint32(40,dataLen,true);
+  let off=44;
+  for(let i=0;i<len;i++){
+    for(let c=0;c<nCh;c++){
+      let s=Math.max(-1,Math.min(1,chans[c][i]));
+      dv.setInt16(off,s<0?s*0x8000:s*0x7FFF,true);off+=2;
+    }
+  }
+  return new Blob([buf],{type:'audio/wav'});
+}
+async function renderWAV(bars){
+  if(rendering)return;
+  rendering=true;
+  const wasPlaying=playing;if(playing)stop();
+  // snapshot live refs (buildGraph will reassign TRACK gains)
+  const L={ctx,master,noiseBuf,crush:crushInserted,trk:TRACKS.map(t=>({g:t.gain,s:t.sendG}))};
+  const restore=()=>{
+    ctx=L.ctx;master=L.master;noiseBuf=L.noiseBuf;crushInserted=L.crush;
+    TRACKS.forEach((t,i)=>{t.gain=L.trk[i].g;t.sendG=L.trk[i].s;});
+    for(const k in monoVoices)delete monoVoices[k];
+    activeOH.length=0;rendering=false;
+  };
+  try{
+    const sd=stepDurSec();
+    const steps=Math.max(16,bars*16);
+    const tail=2.2;                       // let delay tails & long decays ring out
+    const SR=44100;
+    const off=new OfflineAudioContext(2,Math.ceil(SR*(steps*sd+tail+0.1)),SR);
+    ctx=off;master={};crushInserted=false;activeOH.length=0;
+    noiseBuf=off.createBuffer(1,Math.floor(SR*2),SR);
+    const nd=noiseBuf.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
+    buildGraph();
+    for(const k in monoVoices)delete monoVoices[k];
+    startMonoVoices();
+    const startOff=0.06;
+    let rcp=cp;                            // local pattern cursor (honors CHAIN, leaves global cp alone)
+    for(let g=0;g<steps;g++){
+      if(state.chain&&g>0&&g%64===0)rcp=(rcp+1)%NPTN;
+      const pat=patterns[rcp];
+      const swingOff=(g%2)?(state.swing/100)*sd*.62:0;
+      const t=startOff+g*sd+swingOff;
+      TRACKS.forEach((tr,ti)=>{
+        const pt=pat.tr[ti],pos=g%pt.len,st=pt.steps[pos];
+        if(tr.noteTrack&&monoVoices[ti]&&monoVoices[ti].heldBySlide&&!st.on){
+          monoVoices[ti].vca.gain.setTargetAtTime(.0001,t,.015);
+          monoVoices[ti].heldBySlide=false;
+        }
+        if(!st.on)return;
+        if(st.prob<100&&Math.random()*100>=st.prob)return;
+        const hits=st.rat;
+        for(let h=0;h<hits;h++){
+          const ht=t+h*(sd/hits),acc=st.acc&&h===0;
+          if(tr.noteTrack)triggerMono(ti,st,ht,sd/hits,hits>1);
+          else if(tr.id==='CHH')playHAT(ht,tr.params,acc,tr.gain,false,tr.engines[tr.engine]);
+          else if(tr.id==='OHH')playHAT(ht,tr.params,acc,tr.gain,true,tr.engines[tr.engine]);
+          else DRUMS[tr.id](ht,tr.params,acc,tr.gain,tr.engines[tr.engine]);
+        }
+      });
+    }
+    // close out any note still held by a slide
+    NOTE_TRACKS.forEach(ti=>{const v=monoVoices[ti];if(v&&v.heldBySlide)v.vca.gain.setTargetAtTime(.0001,startOff+steps*sd,.05);});
+    const buf=await off.startRendering();
+    restore();
+    revealDl($('wavDl'),bufferToWav(buf),'drukbox-'+stamp()+'.wav');
+    if(wasPlaying)start();
+  }catch(e){
+    restore();
+    showErr('render: '+(e&&e.message||e));
+  }
+}
+
 /* ---------------- RUIN ---------------- */
 function ruin(){
+  pushUndo();
   const ri=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
   const pat=patterns[cp];
   pat.tr.forEach((pt,ti)=>{
@@ -983,18 +1108,112 @@ function buildTrackPanel(){
 }
 function renderLen(){$('lenVal').textContent=curPT().len+'/64';}
 
+/* refresh every control + readout from current state (after load/undo) */
+function refreshAll(){
+  $('bpmSl').value=state.bpm;$('bpmVal').textContent=state.bpm;$('bpmRead').textContent=state.bpm;
+  $('swingSl').value=state.swing;$('swingVal').textContent=state.swing;
+  ['drive','bits','down','filter','dtime','dfb','dret'].forEach(k=>{$('fx_'+k).value=FX[k];$('fxv_'+k).textContent=FX[k];});
+  $('ptnRead').textContent=PTN_NAMES[cp];
+  if(ctx&&master.bus){TRACKS.forEach(t=>{if(t.gain)t.gain.gain.value=t.vol;if(t.sendG)t.sendG.gain.value=t.send;});applyFX();}
+  if(playing)NOTE_TRACKS.forEach(ti=>rebuildVoice(ti));
+  if(sel.page>=Math.ceil(curPT().len/16))sel.page=0;
+  renderPtnRow();buildChips();buildModes();renderPages();renderGrid();buildTrackPanel();renderLen();
+}
+
+/* ---------------- state serialize / deserialize ---------------- */
+function serialize(){
+  return {v:2,bpm:state.bpm,swing:state.swing,chain:state.chain,FX:Object.assign({},FX),cp,
+    voices:TRACKS.map(t=>({vol:t.vol,send:t.send,engine:t.engine,
+      params:Object.fromEntries(Object.entries(t.params).map(([k,p])=>[k,p.v]))})),
+    patterns:JSON.parse(JSON.stringify(patterns))};
+}
+function deserialize(d){
+  if(!d)return;
+  state.bpm=d.bpm||138;state.swing=d.swing??22;state.chain=!!d.chain;
+  Object.assign(FX,d.FX||{});cp=Math.min(NPTN-1,d.cp||0);
+  (d.voices||[]).forEach((vd,i)=>{
+    const t=TRACKS[i];if(!t)return;
+    if(typeof vd.vol==='number')t.vol=vd.vol;
+    if(typeof vd.send==='number')t.send=vd.send;
+    t.engine=Math.min(vd.engine||0,t.engines.length-1);
+    Object.entries(vd.params||{}).forEach(([k,v])=>{if(t.params[k])t.params[k].v=v;});
+  });
+  (d.patterns||[]).forEach((pd,pi)=>{
+    if(!patterns[pi])return;
+    (pd.tr||[]).forEach((td,ti)=>{
+      const pt=patterns[pi].tr[ti];if(!pt)return;
+      pt.len=Math.min(MAXSTEP,td.len||16);
+      pt.steps.forEach((s,j)=>{
+        const src=td.steps&&td.steps[j];
+        if(src)Object.assign(s,mkStep(),src);else Object.assign(s,mkStep());
+      });
+    });
+  });
+  refreshAll();
+}
+
+/* ---------------- undo (one-deep stack guards RUIN / CLR / LOAD) ---------- */
+const undoStack=[];
+function pushUndo(){try{undoStack.push(JSON.stringify(serialize()));if(undoStack.length>24)undoStack.shift();}catch(e){}}
+function undo(){
+  if(!undoStack.length){showErr('nothing to undo');return;}
+  try{deserialize(JSON.parse(undoStack.pop()));save();}catch(e){showErr('undo: '+e.message);}
+}
+
+/* ---------------- named sets (localStorage library) ---------------- */
+function getLib(){try{return JSON.parse(localStorage.getItem('drukbox_lib'))||[];}catch(e){return[];}}
+function setLib(a){try{localStorage.setItem('drukbox_lib',JSON.stringify(a));}catch(e){showErr('storage full/blocked');}}
+function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());}
+function saveSlot(name){
+  const lib=getLib();
+  const entry={name,ts:Date.now(),data:serialize()};
+  const i=lib.findIndex(x=>x.name===name);
+  if(i>=0)lib[i]=entry;else lib.push(entry);
+  setLib(lib);renderLib();
+}
+function renderLib(){
+  const host=$('slotList');host.innerHTML='';
+  const lib=getLib();
+  if(!lib.length){host.innerHTML='<div class="empty">NO SAVED SETS YET</div>';return;}
+  lib.slice().reverse().forEach(e=>{
+    const row=document.createElement('div');row.className='slot';
+    const nm=document.createElement('div');nm.className='nm';nm.textContent=e.name;
+    const ts=document.createElement('div');ts.className='ts';
+    try{ts.textContent=new Date(e.ts).toLocaleDateString();}catch(_){}
+    const ld=document.createElement('button');ld.className='ld';ld.textContent='LOAD';
+    ld.onclick=()=>{const x=getLib().find(z=>z.name===e.name);if(x){pushUndo();deserialize(x.data);save();}};
+    const rm=document.createElement('button');rm.className='rm';rm.textContent='✕';
+    rm.onclick=()=>{setLib(getLib().filter(z=>z.name!==e.name));renderLib();};
+    row.append(nm,ts,ld,rm);host.appendChild(row);
+  });
+}
+
+/* ---------------- file blob reveal (iOS-safe: user taps the link) -------- */
+function revealDl(el,blob,name){
+  if(el._url){try{URL.revokeObjectURL(el._url);}catch(e){}}
+  const url=URL.createObjectURL(blob);el._url=url;
+  el.href=url;el.setAttribute('download',name);
+  el.textContent=(name.endsWith('.wav')?'SAVE WAV ▸ ':'SAVE FILE ▸ ')+name;
+  el.classList.add('show');
+  // prefer the native iOS share sheet when the user taps (fresh gesture)
+  el.onclick=async ev=>{
+    try{
+      if(navigator.canShare){
+        const f=new File([blob],name,{type:blob.type});
+        if(navigator.canShare({files:[f]})){ev.preventDefault();await navigator.share({files:[f],title:name});}
+      }
+    }catch(e){/* fall back to the anchor's normal download */}
+  };
+}
+
 /* ---------------- persistence (graceful no-op if storage blocked) ---------- */
 let saveT=null;
 function save(){
   clearTimeout(saveT);
   saveT=setTimeout(()=>{
-    try{
-      const data={bpm:state.bpm,swing:state.swing,chain:state.chain,FX,cp,
-        voices:TRACKS.map(t=>({vol:t.vol,send:t.send,engine:t.engine,
-          params:Object.fromEntries(Object.entries(t.params).map(([k,p])=>[k,p.v]))})),
-        patterns};
-      localStorage.setItem('drukbox_v2',JSON.stringify(data));
-    }catch(e){/* storage unavailable (preview sandbox) */}
+    try{localStorage.setItem('drukbox_v2',JSON.stringify(serialize()));}
+    catch(e){/* storage unavailable (preview sandbox) */}
   },400);
 }
 function load(){
@@ -1025,6 +1244,7 @@ $('testRaw').onclick=()=>beep(true);
 $('testBus').onclick=()=>beep(false);
 $('ruinBtn').onclick=()=>ruin();
 $('clearBtn').onclick=()=>{
+  pushUndo();
   curPT().steps.forEach(s=>{s.on=false;s.acc=false;s.rat=1;s.prob=100;s.slide=false;});
   renderGrid();renderPages();save();
 };
@@ -1039,6 +1259,46 @@ $('lenVal').onclick=()=>{ // tap value to cycle bar lengths
 ['drive','bits','down','filter','dtime','dfb','dret'].forEach(k=>{
   $('fx_'+k).oninput=e=>{FX[k]=+e.target.value;$('fxv_'+k).textContent=FX[k];applyFX();save();};
 });
+
+/* archive panel */
+let exportBars=4;
+function buildBarsel(){
+  const host=$('barsel');host.innerHTML='';
+  [1,2,4,8].forEach(b=>{
+    const btn=document.createElement('button');btn.textContent=b;
+    if(b===exportBars)btn.classList.add('sel');
+    btn.onclick=()=>{exportBars=b;buildBarsel();};
+    host.appendChild(btn);
+  });
+}
+$('renderBtn').onclick=async()=>{
+  const b=$('renderBtn');if(b.disabled)return;
+  audioSessionUnlock();
+  b.disabled=true;const old=b.textContent;b.textContent='RENDERING…';
+  try{await renderWAV(exportBars);}catch(e){showErr('wav: '+(e&&e.message||e));}
+  b.textContent=old;b.disabled=false;
+};
+$('saveSet').onclick=()=>{
+  const def='SET '+(getLib().length+1);
+  let nm=prompt('Name this set:',def);
+  if(nm===null)return;
+  nm=(nm.trim()||def).slice(0,40);
+  saveSlot(nm);
+};
+$('expFile').onclick=()=>{
+  const blob=new Blob([JSON.stringify(serialize())],{type:'application/json'});
+  revealDl($('jsonDl'),blob,'drukbox-set-'+stamp()+'.json');
+};
+$('impFile').onclick=()=>$('impInput').click();
+$('impInput').onchange=e=>{
+  const f=e.target.files&&e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{pushUndo();deserialize(JSON.parse(r.result));save();}catch(err){showErr('import: '+err.message);}};
+  r.onerror=()=>showErr('import: read failed');
+  r.readAsText(f);e.target.value='';
+};
+$('undoBtn').onclick=()=>undo();
+
 document.addEventListener('pointerdown',()=>{
   audioSessionUnlock();
   initAudio();
@@ -1052,6 +1312,7 @@ $('swingSl').value=state.swing;$('swingVal').textContent=state.swing;
 ['drive','bits','down','filter','dtime','dfb','dret'].forEach(k=>{$('fx_'+k).value=FX[k];$('fxv_'+k).textContent=FX[k];});
 $('ptnRead').textContent=PTN_NAMES[cp];
 renderPtnRow();buildChips();buildModes();renderPages();buildGrid();buildTrackPanel();renderLen();
+buildBarsel();renderLib();
 </script>
 </body>
 </html>
